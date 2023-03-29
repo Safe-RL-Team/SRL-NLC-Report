@@ -1,0 +1,655 @@
+<!doctype html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style id="distill-article-specific-styles">
+    <%=require("../static/styles.css") %>
+  </style>
+  <script src="https://distill.pub/template.v2.js"></script>
+</head>
+
+<style>
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 0 4px;
+  }
+
+  /* Create two equal columns that sits next to each other */
+  .column {
+    flex: 50%;
+    padding: 0 4px;
+  }
+
+  .column img {
+    margin-top: 8px;
+    vertical-align: middle;
+  }
+</style>
+
+<body>
+
+  <d-front-matter>
+    <script type="text/json">
+      <%= JSON.stringify(require("./frontmatter.json"), null, 4) %>
+    </script>
+  </d-front-matter>
+
+  <d-title>
+    <h1>RL-22-23-Report</h1>
+    <p>SAFE REINFORCEMENT LEARNING WITH NATURAL LANGUAGE CONSTRAINTS</p>
+  </d-title>
+
+  <d-article>
+
+    <h4>Abstract</h4>
+    <p>
+      The paper I need to reproduce this semester addresses the problem of learning task control policies under the constraints of providing a natural language. 
+      Unlike instruction following, the language here is not used to specify goals, but rather to describe situations that agents must avoid when exploring the environment. 
+      Specifying constraints in natural language also differs from the predominant paradigm in safety reinforcement learning, 
+      where safety criteria are enforced by a manually defined cost function. 
+      While natural language allows for simple and flexible specification of safety constraints and budget limits, 
+      its ambiguity poses a challenge in mapping these specifications to representations that can be used by safety reinforcement learning techniques. 
+      To address this problem, its authors developed a model with two parts. 
+      (1) a constraint interpreter that encodes natural language constraints into vector representations that capture spatial and temporal information about forbidden states, 
+      and (2) a policy network that uses these representations to output a policy with minimal constraint violations. 
+      Our model is end-to-end differentiable, and we train it using a recently proposed constrained policy optimization algorithm.
+    </p>
+
+
+    <h4>Constraint Interpreter</h4>
+    The focus of this article is on how to convert textual descriptions of constraints into values that can be directly understood by reinforcement learning. 
+    The following model is used in the paper.
+    <figure>
+      <%= require("../static/diagrams/constraint-interpreter.drawio.svg") %>
+    </figure>
+    <p>
+      (1)The constraint mask module uses the observation <d-math>o_t</d-math> and the text <d-math>x</d-math> to predict a binary constraint mask, 
+      denoted by <d-math>\hat{M}_C</d-math>, that is a prediction of the true constraint mask <d-math>M_C</d-math>. 
+      If there is a cost entity 
+      (i.e., the forbidden state mentioned in the text) in row <d-math>i</d-math> and column <d-math>j</d-math> (denoted by <d-math>o_{t(i, j)}</d-math>) of observation <d-math>o_y</d-math>, 
+      each cell in <d-math>\hat{M}_C</d-math> will contain a one. Otherwise, the cell contains a zero. 
+      The authors use <d-math>\hat{M}_C</d-math> to identify the cost entities in the text while preserving their spatial information for the policy network. 
+      (2) The constraint threshold module uses an LSTM to obtain a text vector representation, followed by a dense layer to generate h. The dense layer generates <d-math>\hat{h}_C</d-math>, 
+      which predicts the true constraint threshold <d-math>h_C</d-math>.
+    </p>
+
+    <h4>Policy Network</h4>
+    <figure>
+      <%= require("../static/diagrams/policy-network.drawio.svg") %>
+    </figure>
+    <h4>Training Procedure for Constraint Interpreter</h4>
+    <p>
+      The constraint translator is composed of two parts as described in previous sections, 
+      firstly the constraint mask module, and the constraint threshold module. 
+      The LSTM is used in the thesis as its semantic analysis module, 
+      and due to the excellent performance of the Transformer in language modeling, 
+      I decided to use this model as an alternative to it in my experiments.
+    </p>
+    <p>
+      The constraint descriptions I use are mainly from the method written by the authors of the paper. 
+      The method uses existing phrases to generate random constraint descriptions based on the target constraints. 
+      Observations are then collected in the provided environment using a random policy. Finally, 
+      based on the collected observations and the constraints corresponding to the observations, 
+      a constraint mask can be generated as the ground truth for training. 
+      The constraint thresholds are already known at the time of generating the constraint descriptions, 
+      so no additional processing is required.
+    </p>
+
+
+    <figure>
+      <%= require("../static/diagrams/constraint_mask_interpreter.drawio.svg") %>
+      <figcaption>The modified constraint mask interpreter</figcaption>
+    </figure>
+
+    <figure style="width: 50%;">
+      <%= require("../static/diagrams/constraint_threshold_interpreter.drawio.svg") %>
+      <figcaption>The modified constraint threshold interpreter</figcaption>
+    </figure>
+
+
+    <p>
+      First I tried to train the model from scratch using the basic Transformer model. 
+      In more detail, I'm using just the encoder part of the Transformer, which is the left part of the following part.
+      The tokenrizer of the model is just a simple numbering of words in the word bank for the vocabulary. 
+      The final accuracy of the model is about 91%.
+    </p>
+
+
+
+    <figure>
+      <%= require("../static/images/transformer.drawio.svg") %>
+    </figure>
+
+    <p>
+      To better verify the feasibility of the approach, I used a pre-trained natural language processing model, 
+      BERT, in my final experiments to analyze the constraints of textual descriptions. 
+      It is noteworthy that the mainstream natural language analysis models nowadays no longer use LSTM, 
+      but are replaced by Transformer, and BERT is one of them. 
+      Since the base model of BERT also uses the Transformer, 
+      I think it can be used as an extension experiment of the previous step.
+      In addition, since our data will not be optimized for the language model, the BERT model needs to be frozen during training.
+    </p>
+
+    <p>
+      The final number of parameters of the constraint mask model is as follows.
+    </p>
+
+    <table id="constraint_interpreter_params_numbers">
+      <thead>
+        <tr>
+          <th scope="col">Layer (type)</th>
+          <th scope="col">Output Shape</th>
+          <th scope="col">Param #</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td scope="row">tf_bert_model (TFBertModel)</td>
+          <td>multiple</td>
+          <td>108310272</td>
+        </tr>
+        <tr>
+          <td>dense (Dense)</td>
+          <td>multiple</td>
+          <td>769</td>
+        </tr>
+        <tr>
+          <td>conv2d (Conv2D)</td>
+          <td>multiple</td>
+          <td>9280</td>
+        </tr>
+        <tr>
+          <td>sequential (Sequential)</td>
+          <td>(50, 49)</td>
+          <td>19249</td>
+        </tr>
+        <tr>
+          <td colspan="3">Total params: 108,339,570</td>
+        </tr>
+        <tr>
+          <td colspan="3">Trainable params: 29,298</td>
+        </tr>
+        <tr>
+          <td colspan="3">Non-trainable params: 108,310,272</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      The final number of parameters of the constraint threshold model is as follows.
+    </p>
+
+    <table id="constraint_interpreter_params_numbers">
+      <thead>
+        <tr>
+          <th scope="col">Layer (type)</th>
+          <th scope="col">Output Shape</th>
+          <th scope="col">Param #</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td scope="row">tf_bert_model (TFBertModel)</td>
+          <td>multiple</td>
+          <td>108310272</td>
+        </tr>
+        <tr>
+          <td>sequential (Sequential)</td>
+          <td>(128, 1)</td>
+          <td>4915329</td>
+        </tr>
+        <tr>
+          <td colspan="3">Total params: 113,225,601</td>
+        </tr>
+        <tr>
+          <td colspan="3">Trainable params: 4,915,329</td>
+        </tr>
+        <tr>
+          <td colspan="3">Non-trainable params: 108,310,272</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      In addition, during the training Constraint Interpreter phase, 
+      the data are generated by the agents in a random environment using random policies.
+      The constrained text descriptions are generated from a fixed library of words by permutation.
+    </p>
+
+    <h4>Training Procedure for Policy Network</h4>
+    <p>
+      Since the policy module described in the paper does not differ from the Constrained Policy Optimization <d-cite key="achiam2017constrained"></d-cite>, 
+      here I use the code base provided by OpenAI
+      <d-footnote id="d-footnote-1">
+        https://github.com/openai/safety-starter-agents
+      </d-footnote> 
+      as a template to use.
+      In addition, the environment used for the experiments is Safety Gym
+      <d-footnote id="d-footnote-2">
+        https://openai.com/blog/safety-gym/
+      </d-footnote>, 
+      which has been customized by the authors of the paper, 
+      and the code has been made available on Github
+      <d-footnote id="d-footnote-3">
+        https://github.com/michahu/hazard-world-grid
+      </d-footnote>.
+    </p>
+    <p>
+      The general process of training remains the same as in the template, 
+      the part that is different is the middle layer of the policy module. 
+      To better fit the data of this paper, 
+      I replaced the multilayer perceptron in the template with a convolutional network, 
+      thus being able to save memory usage to a great extent.
+    </p>
+
+    <h4>Result</h4>
+    <ul>
+      <li>Constraint Interpreter</li>
+        <p>
+          Using the constraints generated by permutation using a fixed word bank together with the observed data, 
+          a constrained interpreter with an accuracy of about 90% can be finally trained.
+          However, accuracy is not the part I want to emphasize. 
+          In my experiments, I use the pre-trained model provided by the huggingface library <d-cite key="Wolf_Transformers_State-of-the-Art_Natural_2020"></d-cite> to transcribe the constraint text. 
+          The transcribed constraint text was then used for testing.
+          The final accuracy was also about 90% as the original test accuracy. 
+          This shows that the network after Transformer did learn how to use the embedded text and the observed data to derive the constraint masks.
+        </p>
+        <table id="constraint_interpreter_accuracies">
+          <caption>Constraint interpreter accuracies</caption>
+          <thead>
+            <tr>
+              <th scope="col">Base Model</th>
+              <th scope="col">Mask Module</th>
+              <th scope="col">Threshold Module</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td scope="row">Basic Transformer</td>
+              <td>90.50%</td>
+              <td>94.02%</td>
+            </tr>
+            <tr>
+              <td>Pre-trained BERT</td>
+              <td>90.28%</td>
+              <td>94.37%</td>
+            </tr>
+          </tbody>
+        </table>
+      <li>Policy Network</li>
+        <p>
+          As described in the previous sections, I use the CPO from the existing code to train the policy network. 
+          However, some parameters in it were adjusted. 
+          First, it is important to note that the training method provided inside this code base uses an online approach, 
+          so the data for each epoch needs to be generated online. 
+          To ensure the availability of the data and to ensure that there are enough trajectories per epoch, 
+          I set the maximum length of each trajectory to 1e3 and the maximum length of each epoch to 1e5. A total of 1e3 epochs are trained.
+          During the training the gamma has been set to 0.95, lambda 0.90, and gamma for cost is 0.99 and lambda for cost is 0.97, lastly target kl-divergence is 0.01.
+          <figure>
+            <%= require("../static/images/cost.drawio.svg") %>
+            <figcaption>Cost trend per Epoch</figcaption>
+          </figure>
+          <figure>
+            <%= require("../static/images/performance.drawio.svg") %>
+            <figcaption>Performance trend per Epoch</figcaption>
+          </figure>
+        </p>
+    </ul>
+
+    <h4>Challenging Issues</h4>
+    <ul>
+      <li>Limited wording of the simulator</li>
+        <p>
+          In the module provided in the paper, 
+          there is no training data available for use. All the data for this experiment needs to be regenerated. 
+          However the method used to generate the language constraints in the code of the thesis is extremely simple and contains only 30 words.
+          This not only makes it very difficult to train the language model, but also has no way to verify the generality of the language model.
+          To solve the problem, I use a pre-trained sentence rephrase model to rewirte the language constraints.
+          The model used is the one provided in the HuggingFace library <d-cite key="Wolf_Transformers_State-of-the-Art_Natural_2020"></d-cite> called Vamsi Paraphrase.
+          I paraphrased all the language restrictions with this model, with the purpose of testing the generality of the language model.
+          The final results were not surprising, as the generalizability of the language model trained using the original model was far less than the accuracy of the pre-trained model.
+          <table id="constraint_interpreter_accuracies_paraphrased">
+            <caption>Constraint interpreter accuracies with paraphrased constraints</caption>
+            <thead>
+              <tr>
+                <th scope="col">Base Model</th>
+                <th scope="col">Mask Module</th>
+                <th scope="col">Threshold Module</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td scope="row">Basic Transformer</td>
+                <td>75.33%</td>
+                <td>82.42%</td>
+              </tr>
+              <tr>
+                <td>Pre-trained BERT</td>
+                <td>91.02%</td>
+                <td>93.77%</td>
+              </tr>
+            </tbody>
+          </table>
+        </p>
+      <li>Multiple models used simultaneously</li>
+        <p>
+          One of the problems that bothered me most when conducting the paper replication was that I had to load three models at the same time in the experiment. 
+          Two of the models involved natural language analysis, and such models tend to be relatively large in size. 
+          The problem with this is that the memory used by the models will be huge. Three models already require nearly 20GB of memory. 
+          The training was finally done on an NVIDIA 3090. But even with the 3090, the model size did not get a huge boost because it needed to be loaded at the same time.
+        </p>
+      <li>Online Learning</li>
+        <p>
+          To try to solve the above problem, I had considered using Google's TPU for training. 
+          However, after some research, I found that since the experiment is online learning and thus requires the use of CPUs to fetch data from the simulated environment. 
+          However, the interface provided by the TPU is very limited, and its coordination requires a lot of work if you want the CPU as well as the TPU to work simultaneously. 
+          As an individual, it is very difficult to accomplish such a task. So I finally gave up the idea.
+        </p>
+    </ul>
+
+    <h4>Summary</h4>
+    <p>
+      The paper I needed to reproduce this semester focused on deep learning for natural language learning. 
+      In the process of replication, I used modules that I am familiar with to modify the model described in the paper to some extent and justify the modification. 
+      Although I encountered many difficulties during the replication process, including incomplete data, I found solutions to most of them, and I learned a lot about the practical problems that reinforcement learning requires. 
+      I also received very valuable advice from the authors of the paper, which gave me a sense of the enthusiasm of the people working in this research area. 
+      I look forward to better developments in the field of reinforcement learning in the future.
+    </p>
+    
+
+    <!-- <h4>Hot reloading</h4>
+    <p>Your browser can automatically refresh when your editor saves. This should work by default, and you can disable
+      it in <code>index.js</code>. Sometimes hot reloading isn't fully compatible with all types of code, so you may
+      need to try manually reloading if you're seeing inconsistent behavior.</p>
+
+    <h4>Inlined SVGs</h4>
+    <p>SVGs are so small that it can be nice to save an extra request and simply inline them intop your HTML:</p>
+
+    <figure>
+      <%= require("../static/diagrams/diffparam.svg") %>
+    </figure>
+
+    <style>
+      #arrow-2 #arrow-head {
+        fill: steelblue;
+      }
+
+      #arrow-2 #arrow-line {
+        stroke: steelblue;
+      }
+    </style>
+
+    <p>Let's use some CSS to style an inlined SVG. Here's an arrow
+      <svg width="27px" height="9px" viewBox="0 0 27 9" version="1.1" xmlns="http://www.w3.org/2000/svg"
+        xmlns:xlink="http://www.w3.org/1999/xlink">
+        <g id="arrow" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+          <g id="Group" transform="translate(-0.195652, 0.0)">
+            <path d="M10.5,4.5 L26.8913043,4.5" id="arrow-line" stroke="#FF6600" stroke-width="2"
+              stroke-linecap="square" stroke-dasharray="6,4"></path>
+            <g id="arrow-head" transform="translate(5.0, 4.5) scale(-1, 1) translate(-5.0, -4.5) translate(0.5, 0.0)"
+              fill="#FF6600" fill-rule="nonzero">
+              <path
+                d="M4.5,0 C5.67007294,3.25202425 6.85281213,6.29180565 9,9 L4.5,7.3125 L0,9 C2.13530145,6.28972675 3.34126793,3.24998975 4.5,0 Z"
+                id="Shape" transform="translate(4.5, 4.5) rotate(-270.0) translate(-4.5, -4.5) "></path>
+            </g>
+          </g>
+        </g>
+      </svg> that we
+      can make
+      inline. If you'd like to change the color in CSS, we can do so. Let's put the second arrow (<span
+        id="arrow-2"><svg width="27px" height="9px" viewBox="0 0 27 9" version="1.1" xmlns="http://www.w3.org/2000/svg"
+          xmlns:xlink="http://www.w3.org/1999/xlink">
+          <g id="arrow" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+            <g id="Group" transform="translate(-0.195652, 0.0)">
+              <path d="M10.5,4.5 L26.8913043,4.5" id="arrow-line" stroke="#FF6600" stroke-width="2"
+                stroke-linecap="square" stroke-dasharray="6,4"></path>
+              <g id="arrow-head" transform="translate(5.0, 4.5) scale(-1, 1) translate(-5.0, -4.5) translate(0.5, 0.0)"
+                fill="#FF6600" fill-rule="nonzero">
+                <path
+                  d="M4.5,0 C5.67007294,3.25202425 6.85281213,6.29180565 9,9 L4.5,7.3125 L0,9 C2.13530145,6.28972675 3.34126793,3.24998975 4.5,0 Z"
+                  id="Shape" transform="translate(4.5, 4.5) rotate(-270.0) translate(-4.5, -4.5) "></path>
+              </g>
+            </g>
+          </g>
+        </svg></span>) in a tag with an ID, so we can
+      target it in CSS.
+
+      <d-code block="" language="css">
+        #arrow-2 #arrow-head {
+        fill: steelblue;
+        }
+
+        #arrow-2 #arrow-line {
+        stroke: steelblue;
+        }
+      </d-code>
+
+    </p>
+
+    <h4>Formulas</h4>
+
+    <p>Here's a test of an inline equation <d-math>c = a^2 + b^2</d-math>. Can also be used with configurable katex
+      settings, for example by
+      using inline <code>$</code> signs: <d-math>x^2</d-math>. There are also block equations:</p>
+    <d-math block="">
+      c = \pm \sqrt{ \sum_{i=0}^{n}{a^{222} + b^2}}
+    </d-math>
+    <p>Math can also be quite involved:</p>
+    <d-math block="">
+      \frac{1}{\Bigl(\sqrt{\phi \sqrt{5}}-\phi\Bigr) e^{\frac25 \pi}} = 1+\frac{e^{-2\pi}} {1+\frac{e^{-4\pi}}
+      {1+\frac{e^{-6\pi}} {1+\frac{e^{-8\pi}} {1+\cdots} } } }
+    </d-math>
+
+    <p>We've also been experimenting with <a
+        href="https://github.com/distillpub/template/wiki/Annotated-Formulas">annotated formulas</a>:</p>
+
+    <style>
+      .eq-grid {
+        display: grid;
+        justify-content: start;
+        grid-row-gap: 10px;
+      }
+
+      .eq-grid figcaption d-math {
+        font-size: 100%;
+      }
+
+      .eq-grid .expansion-marker {
+        border: 1px solid #CCC;
+        border-bottom: none;
+        height: .5em;
+        width: 100%;
+      }
+    </style>
+
+    <figure class="eq-grid">
+
+      <div style="grid-row: 1; grid-column: 1;">
+        <d-math> C ~~~=~~~~ </d-math>
+      </div>
+      <div style="grid-row: 1; grid-column: 2;">
+        <d-math> H^E_D(X, Z) </d-math>
+      </div>
+      <div style="grid-row: 1; grid-column: 3;">
+        <d-math> ~~~-~~~ </d-math>
+      </div>
+      <div style="grid-row: 1; grid-column: 4;">
+        <d-math> H^E_E(X, Z) </d-math>
+      </div>
+
+
+      <div class="expansion-marker" style="grid-row: 2; grid-column: 4 / 7; "></div>
+
+      <div style="grid-row: 3; grid-column: 1;">
+        <d-math> ~~~~~~~=~~~~ </d-math>
+      </div>
+      <div style="grid-row: 3; grid-column: 2;">
+        <d-math> H^E_D(X, Z) </d-math>
+      </div>
+      <div style="grid-row: 3; grid-column: 3;">
+        <d-math> ~~~-~~~ </d-math>
+      </div>
+      <div style="grid-row: 3; grid-column: 4;">
+        <d-math> H^E_E(Z | X) </d-math>
+      </div>
+      <div style="grid-row: 3; grid-column: 5;">
+        <d-math> ~~~-~~~ </d-math>
+      </div>
+      <div style="grid-row: 3; grid-column: 6;">
+        <d-math> H^E_E(X) </d-math>
+      </div>
+
+      <figcaption style="grid-row: 4; grid-column: 4; max-width:135px;">
+        Bits to represent <d-math>z</d-math><br> if you already know <d-math>x</d-math>.
+      </figcaption>
+      <figcaption style="grid-row: 4; grid-column: 6; max-width:120px;">
+        Bits to represent<br>
+        <d-math>x</d-math> by itself.
+      </figcaption>
+
+    </figure> -->
+
+    <!-- <h4>Citations</h4>
+
+    <p>We can<d-cite key="mercier2011humans,yang2021safe"></d-cite> also cite <d-cite
+        key="gregor2015draw,mercier2011humans,openai2018charter"></d-cite> external publications. <d-cite
+        key="dong2014image,dumoulin2016guide,mordvintsev2015inceptionism"></d-cite>. We should also be testing
+      footnotes
+      <d-footnote id="d-footnote-1">This will become a hoverable footnote. This will become a hoverable footnote. This
+        will become a
+        hoverable footnote. This will become a hoverable footnote. This will become a hoverable footnote. This will
+        become a hoverable footnote. This will become a hoverable footnote. This will become a hoverable footnote.
+      </d-footnote>. There are multiple footnotes, and they appear in the appendix<d-footnote id="d-footnote-2">Given I
+        have coded them
+        right. Also, here's math in a footnote: <d-math>c = \sum_0^i{x}</d-math>. Also, a citation. Box-ception<d-cite
+          key="gregor2015draw"></d-cite>!</d-footnote> as well.</p>
+
+
+    <h4>Displaying code</h4>
+    <p>Some inline javascript:<d-code language="javascript">var x = 25;</d-code>. And here's a javascript code block.
+    </p>
+
+    <d-code block="" language="javascript">
+      var x = 25;
+      function(x){
+      return x * x;
+      }
+    </d-code>
+    <p>We also support some highlighting.</p>
+    <d-code block="" language="python">
+      # Python 3: Fibonacci series up to n
+      def fib(n):
+      a, b = 0, 1
+      while a &lt; n: print(a, end=' ' ) a, b=b, a+b </d-code>
+
+    <h4>Tables</h4>
+    <p>We have simple tables that try to stay readable at most screen sizes:
+    </p>
+
+    <style>
+      #example-table {
+        overflow-x: scroll;
+      }
+
+      #example-table th {
+        white-space: nowrap;
+      }
+
+      #example-table tbody th {
+        font-weight: initial;
+        border-bottom: 1px solid rgb(242, 242, 242);
+      }
+
+      #example-table tbody tr:last-of-type th {
+        border-bottom: inherit;
+      }
+
+      #example-table td,
+      #example-table thead th {
+        text-align: center;
+      }
+
+      #example-table td {
+        border-color: rgb(242, 242, 242);
+      }
+
+      #example-table td.no {
+        background-color: #f6f6f6;
+      }
+    </style>
+    <table id="example-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th scope="col">Parallel</th>
+          <th scope="col">Efficient</th>
+          <th scope="col">Reversible</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">GANs</th>
+          <td>Yes</td>
+          <td>Yes</td>
+          <td class="no">No</td>
+        </tr>
+        <tr>
+          <th scope="row">Flow Models</th>
+          <td>Yes</td>
+          <td class="no">No</td>
+          <td>Yes</td>
+        </tr>
+        <tr>
+          <th scope="row">Autoregressive Models</th>
+          <td class="no">No</td>
+          <td>Yes</td>
+          <td>Yes</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h4>Interactive Figures</h4>
+
+    <p>
+      Here's a dynamically instantiated "figure". We use Intersection Observers to allow loading resource-heavy
+      figures only when readers scroll close to them. The code for this is in <code>src/index.js</code>.
+    </p>
+
+    <d-figure id="svelte-example-dfigure">
+      <figure>
+        <div id="svelte-example-target"></div>
+        <figcaption>And a static figcaption. You can use citations<d-cite key="mercier2011humans"></d-cite> in this
+          figcaption, but not in text added by javascript.</figcaption>
+      </figure>
+    </d-figure>
+
+    <p>You can't use citation tags (<code>d-cite</code>) in figures that are dynamically loaded using Javascript.
+      Distill statically
+      analyzes your submission for its citations, because they need to be uploaded to indexers and organizations like <a
+        href="https://www.crossref.org/">CrossRef</a> and <a href="https://scholar.google.com">Google Scholar</a>.</p>
+
+    <p>That's it for the example article! Feel free to look at <a
+        href="https://github.com/distillpub?utf8=%E2%9C%93&q=post--&type=public">implementations
+        of existing Distill articles</a>, or ask for help in
+      the <a href="http://slack.distill.pub">Distill Slack Community</a>.</p> -->
+
+  </d-article>
+
+
+
+  <d-appendix>
+    <h3>Acknowledgments</h3>
+    <p>
+      Many thanks to Michael Hu for his advice.
+    </p>
+
+    <d-footnote-list></d-footnote-list>
+    <d-citation-list></d-citation-list>
+  </d-appendix>
+
+  <!-- bibliography will be inlined during Distill pipeline's pre-rendering -->
+  <d-bibliography src="bibliography.bib"></d-bibliography>
+
+</body>
